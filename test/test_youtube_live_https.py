@@ -145,6 +145,26 @@ class TestLiveHttpsGenerator(unittest.TestCase):
         self.assertEqual(yielded, 16,
                          f'expected exactly 16 yields before budget-exit, got {yielded}')
 
+    def test_stream_end_returns_cleanly(self):
+        """refetch_url returning ('ended', None) terminates generator cleanly and
+        emits a 'Live stream ended' message via to_screen. See design doc
+        section 9 Test 3. Must be driven stepwise: the generator only reaches
+        refetch_url after ctx['last_error'] is seeded with an HTTPError."""
+        gen, ctx, refetch = self._run_gen([('ended', None)], None)
+
+        with mock.patch.object(self.ie, 'to_screen') as to_screen:
+            first = next(gen)
+            self.assertEqual(first['url'], self.initial_url)
+
+            ctx['last_error'] = _make_http_error(403)
+            with self.assertRaises(StopIteration):
+                next(gen)
+
+        self.assertEqual(refetch.call_count, 1)
+        self.assertEqual(to_screen.call_count, 1)
+        msg = to_screen.call_args[0][0]
+        self.assertIn('Live stream ended', msg)
+
 
 if __name__ == '__main__':
     unittest.main()
