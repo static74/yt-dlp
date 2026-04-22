@@ -66,7 +66,7 @@ All new code lives in `yt_dlp/extractor/youtube/_video.py`. Zero changes to any 
 **Two new methods on `YoutubeIE`, placed next to their DASH analogues:**
 
 - **`_prepare_live_https_formats(self, formats, video_id, url, webpage_url, smuggled_data)`** — scans `formats` for entries that match the hang=1 shape and, for each match, rewrites its protocol to `http_dash_segments_generator`, binds a fragment generator via `functools.partial`, and sets `is_live=True`. Holds a closure over enough extraction context to refresh URLs when they expire.
-- **`_live_https_fragments(self, video_id, itag, client_name, initial_url, refetch_url, ctx)`** — the generator. Infinite loop that yields one fragment dict per iteration, reads `ctx['last_error']` as an error back-channel, calls `refetch_url` on HTTP failures, and exits on budget exhaustion or stream-end signal.
+- **`_live_https_fragments(self, video_id, format_id, initial_url, refetch_url, ctx)`** — the generator. Infinite loop that yields one fragment dict per iteration, reads `ctx['last_error']` as an error back-channel, calls `refetch_url` on HTTP 4xx failures, and exits on budget exhaustion or confirmed stream-end. The identity used for refresh match is `format_id` (always present on format dicts produced by `process_https_formats`), not `_itag`/`_client` — those are only stamped on live DASH formats when `needs_live_processing` is truthy (see `_video.py:3755-3758`).
 
 **Call site:** one added line at `_video.py:~4151`, guarded by `live_status == 'is_live'`:
 
@@ -104,22 +104,30 @@ if live_status == 'is_live':
 def _prepare_live_https_formats(self, formats, video_id, url, webpage_url, smuggled_data):
 ```
 
-**Match conditions:**
+**Match conditions (phase-A URL-shape predicate):**
+
+```python
+def _is_hang_shaped(fmt_url):
+    if not fmt_url:
+        return False
+    qs = urllib.parse.parse_qs(urllib.parse.urlparse(fmt_url).query)
+    return 'yt_live_broadcast' in qs.get('source', []) or '1' in qs.get('hang', [])
+```
 
 - `f.get('protocol') == 'https'` (or unset), AND
-- URL query (parsed with `urllib.parse.parse_qs`) contains `source=yt_live_broadcast` OR `hang=1`.
+- `_is_hang_shaped(f.get('url'))` returns True.
 
 **For each match:**
 
-- Build a `refetch_url(itag, client_name)` closure capturing `(url, smuggled_data, webpage_url, video_id)` and a `threading.Lock()`. On call:
+- Build a `refetch_url(format_id)` closure capturing `(url, smuggled_data, webpage_url, video_id)` and a `threading.Lock()`. On call:
   1. Acquire lock.
   2. Try `_initial_extract(url, smuggled_data, webpage_url, self._webpage_client, video_id)` plus `_list_formats(...)`.
-  3. If `ExtractorError` raised, return `None`.
-  4. If `live_status != 'is_live'`, return `None`.
-  5. Find the format matching `(itag, client_name)`; if absent, return `None`.
-  6. Return that format's `url`.
+  3. If `ExtractorError` raised: release lock, return `('retry', None)`. Extraction didn't complete; the caller should keep using its current URL and try again on the next error-triggered refresh.
+  4. If `live_status != 'is_live'`: return `('ended', None)`. Stream confirmed over (transitioned to VOD, video removed, etc.).
+  5. Find the format matching `f.get('format_id') == format_id and _is_hang_shaped(f.get('url'))`; if absent: return `('ended', None)`. Extraction succeeded but the tier is gone — treat as ended (re-extract isn't going to bring it back, and we don't want to fall back to a lower tier silently).
+  6. Return `('ok', match['url'])`.
 - `f['protocol'] = 'http_dash_segments_generator'`
-- `f['fragments'] = functools.partial(self._live_https_fragments, video_id, f['_itag'], f['_client'], f['url'], refetch_url)`
+- `f['fragments'] = functools.partial(self._live_https_fragments, video_id, f['format_id'], f['url'], refetch_url)`
 - `f['is_live'] = True`
 
 Does NOT rewrite `f['url']`. `--get-url`, `--dump-json`, `--simulate` keep seeing the initial URL. `DashSegmentsFD` only consumes `f['fragments']` during actual download.
@@ -133,7 +141,7 @@ Does NOT rewrite `f['url']`. `--get-url`, `--dump-json`, `--simulate` keep seein
 **Signature:**
 
 ```python
-def _live_https_fragments(self, video_id, itag, client_name, initial_url, refetch_url, ctx):
+def _live_https_fragments(self, video_id, format_id, initial_url, refetch_url, ctx):
 ```
 
 **Contract:**
@@ -163,11 +171,17 @@ while True:
     if last_error is not None:
         error_score += 2
         if isinstance(last_error, HTTPError) and last_error.status < 500:
-            new_url = refetch_url(itag, client_name)
-            if new_url is None:
+            status, new_url = refetch_url(format_id)
+            if status == 'ended':
                 self.to_screen(f'[{video_id}] Live stream ended, finalizing output')
                 return
-            current_url = new_url
+            if status == 'ok':
+                current_url = new_url
+            # status == 'retry': extractor itself failed transiently. Keep
+            # current_url; error_score was already bumped by the triggering
+            # HTTP error. If the situation is truly terminal, future iterations
+            # will keep failing and we'll exit via ERROR_BUDGET below. Avoids
+            # mis-terminating a still-live capture on a transient extractor blip.
         # 5xx and network errors: do not refresh, retry same URL
 
     if error_score > ERROR_BUDGET:
@@ -222,7 +236,13 @@ Described in §6.2.
 
 ### Phase 5: URL refresh
 
-`refetch_url` acquires its lock, re-runs `_initial_extract` + `_list_formats`, and returns either a fresh URL for the matching `(itag, client_name)` or `None`. `None` means "stop gracefully" and covers three cases (auth loss, live→VOD transition, itag dropped from tier list).
+`refetch_url(format_id)` acquires its lock, re-runs `_initial_extract` + `_list_formats`, and returns a 2-tuple `(status, url_or_none)`:
+
+- **`('ok', url)`** — success. Generator adopts the new URL.
+- **`('ended', None)`** — terminal. Exactly two sub-cases, both diagnosed only after a *successful* re-extraction: `live_status != 'is_live'` (stream transitioned to VOD or was removed), or our `format_id` is absent from the refreshed format list (tier dropped). Generator prints "Live stream ended" and returns.
+- **`('retry', None)`** — transient. `_initial_extract` or `_list_formats` raised `ExtractorError` before producing a result — we don't have enough evidence to conclude the stream ended. Generator keeps using its current URL; if the situation is truly permanent, subsequent HTTP errors will bump the error budget and the generator terminates via `ERROR_BUDGET` instead.
+
+The critical distinction: `'ended'` requires a confirmed observation (we successfully talked to YouTube and learned that the format/stream is gone). `'retry'` is ignorance (we couldn't talk to YouTube). Treating the latter as terminal would silently finalize a still-live recording every time there's a transient rate-limit or network blip.
 
 ### Interactions
 
@@ -247,12 +267,12 @@ One key: `ctx['last_error']`. Generator reads at iteration top, downloader write
 | Category | Detection | Action | Termination |
 |---|---|---|---|
 | Transient network (timeout, DNS, conn reset) | `URLError` / `OSError` / `TimeoutError` | `error_score += 2`, retry same URL | `error_score > 30` |
-| HTTP 403 | `HTTPError(status=403)` | `error_score += 2`, refresh URL | budget OR refresh returns `None` |
+| HTTP 403 | `HTTPError(status=403)` | `error_score += 2`, call `refetch_url` | budget OR `refetch_url` returns `('ended', None)` |
 | HTTP 404 | `HTTPError(status=404)` | Same as 403 | Same |
 | HTTP other 4xx | `HTTPError(status < 500)` | Same as 403 | Same |
 | HTTP 5xx | `HTTPError(status >= 500)` | `error_score += 2`, do NOT refresh | `error_score > 30` |
-| Stream ended | `refetch_url` returns `None` | `to_screen('Live stream ended, finalizing output')`, return | Immediate, graceful |
-| Auth loss mid-run | `_initial_extract` raises inside `refetch_url` | `refetch_url` catches, returns `None` → stream-end path | Immediate, graceful |
+| Stream confirmed ended | `refetch_url` returns `('ended', None)` after successful re-extraction (live_status flipped, or tier gone) | `to_screen('Live stream ended, finalizing output')`, return | Immediate, graceful |
+| Transient extractor failure during refresh | `refetch_url` returns `('retry', None)` (ExtractorError inside `_initial_extract` / `_list_formats`) | Keep `current_url`, do NOT terminate. error_score from the triggering HTTP error stays; if the situation is permanent, the budget exhausts and we terminate there instead | `error_score > 30` |
 | Budget exhausted | `error_score > 30` | `report_warning('Error budget exhausted, stopping')`, return | Immediate |
 | User Ctrl-C | `KeyboardInterrupt` in `FragmentFD` | File closed, generator GC'd | Immediate, partial file preserved |
 
@@ -286,15 +306,16 @@ Three tests. The second is the one we will not drop under any condition.
 
 Assert `_prepare_live_https_formats` does (or does not) rewrite the format's `protocol`.
 
-**Test 2: generator state machine (required, load-bearing).** Drives `_live_https_fragments` with a fake `refetch_url` that records calls, and a synthetic `ctx` that the test mutates between `next()` calls to simulate `FragmentFD` setting `last_error`. Three sub-cases:
+**Test 2: generator state machine (required, load-bearing).** Drives `_live_https_fragments` with a fake `refetch_url` that records calls and returns whatever tuple the test dictates, and a synthetic `ctx` that the test mutates between `next()` calls to simulate `FragmentFD` setting `last_error`. Four sub-cases:
 
 - **Happy path:** no errors, 5 yields against `initial_url`, `refetch_url` never called.
-- **403 refresh:** one yield against `initial_url`, test sets `ctx['last_error'] = HTTPError(status=403)`, next yield uses the new URL, `refetch_url` call count == 1.
-- **Budget exhaustion:** continuous 403s; assert generator terminates after the predicted number of yields based on `+2/-1` math and budget 30.
+- **403 refresh (ok):** one yield against `initial_url`, test sets `ctx['last_error'] = HTTPError(status=403)`, fake returns `('ok', new_url)`, next yield uses `new_url`, `refetch_url` call count == 1.
+- **Transient refresh keeps going:** set `ctx['last_error'] = HTTPError(status=403)`, fake returns `('retry', None)`; next yield still uses `initial_url` (the stale URL); generator does NOT terminate on this iteration; `refetch_url` call count == 1.
+- **Budget exhaustion:** continuous 403s with `refetch_url` always returning `('retry', None)`; assert generator terminates after the predicted number of yields based on `+2/-1` math and budget 30. This sub-case is the whole reason the `'retry'` path exists — it proves termination still happens, just via budget rather than via misattributed end-of-stream.
 
-This test locks in the budget math. That math is the subtlest piece of phase-A logic and the most likely to be edited silently by future maintainers. This test is non-negotiable.
+This test locks in the budget math AND the three-valued return contract. That contract is the subtlest piece of phase-A logic and the most likely to be edited silently by future maintainers. This test is non-negotiable.
 
-**Test 3: stream-end termination.** Fake `refetch_url` returns `None` on first call. Assert `list(gen)` is finite and does not raise.
+**Test 3: stream-end termination.** Fake `refetch_url` returns `('ended', None)` on first call. Assert `list(gen)` is finite and does not raise. Separately: assert `to_screen` was called with a message containing "Live stream ended".
 
 ### Tier 2: manual smoke test
 
