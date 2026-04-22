@@ -2100,6 +2100,33 @@ class YoutubeIE(YoutubeBaseInfoExtractor):
 
             time.sleep(max(0, FETCH_SPAN + fetch_time - time.time()))
 
+    @staticmethod
+    def _is_hang_shaped(fmt_url):
+        """Return True iff URL query has source=yt_live_broadcast or hang=1 — the YouTube
+        live adaptive HTTPS `hang=1` shape described in issue #2."""
+        if not fmt_url:
+            return False
+        qs = urllib.parse.parse_qs(urllib.parse.urlparse(fmt_url).query)
+        return ('yt_live_broadcast' in qs.get('source', [])
+                or '1' in qs.get('hang', []))
+
+    def _prepare_live_https_formats(self, formats, video_id, url, webpage_url, smuggled_data):
+        """Mark YouTube live adaptive HTTPS formats (hang=1 URLs) with the generator protocol
+        so DashSegmentsFD picks them up. See issue #2 and the design doc at
+        docs/superpowers/specs/2026-04-21-youtube-live-https-downloader-design.md.
+
+        Minimal phase-A body: detect matching formats and rewrite protocol + is_live. The
+        partial binding for `fragments` is added in Task 2; the refetch_url closure is
+        added in Task 4.
+        """
+        for f in formats:
+            if f.get('protocol') not in (None, 'https'):
+                continue
+            if not self._is_hang_shaped(f.get('url')):
+                continue
+            f['protocol'] = 'http_dash_segments_generator'
+            f['is_live'] = True
+
     def _get_player_js_version(self):
         if self._player_js_version == 'actual':
             return None, None
