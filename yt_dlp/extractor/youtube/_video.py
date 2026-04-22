@@ -2102,8 +2102,10 @@ class YoutubeIE(YoutubeBaseInfoExtractor):
 
     @staticmethod
     def _is_hang_shaped(fmt_url):
-        """Return True iff URL query has source=yt_live_broadcast or hang=1 — the YouTube
-        live adaptive HTTPS `hang=1` shape described in issue #2."""
+        """Return True iff URL query has source=yt_live_broadcast or hang=1.
+
+        This is the YouTube live adaptive HTTPS `hang=1` shape described in issue #2.
+        """
         if not fmt_url:
             return False
         qs = urllib.parse.parse_qs(urllib.parse.urlparse(fmt_url).query)
