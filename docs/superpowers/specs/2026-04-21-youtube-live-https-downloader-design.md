@@ -315,7 +315,13 @@ Assert `_prepare_live_https_formats` does (or does not) rewrite the format's `pr
 
 This test locks in the budget math AND the three-valued return contract. That contract is the subtlest piece of phase-A logic and the most likely to be edited silently by future maintainers. This test is non-negotiable.
 
-**Test 3: stream-end termination.** Fake `refetch_url` returns `('ended', None)` on first call. Assert `list(gen)` is finite and does not raise. Separately: assert `to_screen` was called with a message containing "Live stream ended".
+**Test 3: stream-end termination.** Drive the generator stepwise, not with `list()` (the generator only reaches the refresh block when `ctx['last_error']` is an `HTTPError(status < 500)`, matching the back-channel contract used by `FragmentFD` at `fragment.py:443`; without an error seeded, it yields forever against `initial_url` under `FETCH_SPAN` pacing). Concretely:
+
+1. Call `next(gen)` — consume the first yield against `initial_url`.
+2. Set `ctx['last_error'] = HTTPError(status=403)`. Configure fake `refetch_url` to return `('ended', None)`.
+3. Call `next(gen)` inside `pytest.raises(StopIteration)` (or `unittest`'s `assertRaises`) — the generator hits the error-handling block, invokes `refetch_url`, sees `'ended'`, and returns.
+4. Assert `refetch_url` call count == 1.
+5. Assert `to_screen` was called once with a message containing `"Live stream ended"`.
 
 ### Tier 2: manual smoke test
 
