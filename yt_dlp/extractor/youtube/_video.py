@@ -2113,19 +2113,45 @@ class YoutubeIE(YoutubeBaseInfoExtractor):
                 or '1' in qs.get('hang', []))
 
     def _prepare_live_https_formats(self, formats, video_id, url, webpage_url, smuggled_data):
-        """Mark YouTube live adaptive HTTPS formats (hang=1 URLs) with the generator protocol
-        so DashSegmentsFD picks them up. See issue #2 and the design doc at
+        """Mark YouTube live adaptive HTTPS formats (hang=1 URLs) with the generator
+        protocol so DashSegmentsFD picks them up. See issue #2 and the design doc at
         docs/superpowers/specs/2026-04-21-youtube-live-https-downloader-design.md.
 
-        Minimal phase-A body: detect matching formats and rewrite protocol + is_live. The
-        partial binding for `fragments` is added in Task 2; the refetch_url closure is
-        added in Task 4.
+        For each matching format, builds a refetch_url closure that re-runs
+        _initial_extract + _list_formats to obtain a fresh URL when the current
+        one expires. Closure returns (status, url_or_none) where status is one
+        of 'ok', 'ended', 'retry'. 'ended' requires a successful re-extraction
+        that confirms the stream is over (live_status flipped or tier gone);
+        'retry' is used for transient extractor failures so the generator keeps
+        its current URL and the error budget stays in control of termination.
         """
-        def _placeholder_refetch_url(format_id):
-            # Real closure is installed in Task 4 (wires _initial_extract + _list_formats).
-            # Tests inject their own refetch_url directly when calling _live_https_fragments.
-            raise NotImplementedError(
-                'refetch_url closure not yet wired; see design doc section 6.1')
+        lock = threading.Lock()
+
+        def refetch_url(format_id):
+            with lock:
+                try:
+                    _, _, _, _, prs, player_url = self._initial_extract(
+                        url, smuggled_data, webpage_url, self._webpage_client, video_id)
+                    video_details = traverse_obj(prs, (..., 'videoDetails'), expected_type=dict)
+                    microformats = traverse_obj(
+                        prs, (..., 'microformat', 'playerMicroformatRenderer'),
+                        expected_type=dict)
+                    _, live_status, new_formats, _ = self._list_formats(
+                        video_id, microformats, video_details, prs, player_url)
+                except ExtractorError:
+                    return 'retry', None
+
+            if live_status != 'is_live':
+                return 'ended', None
+
+            match = next(
+                (f for f in new_formats
+                 if f.get('format_id') == format_id and self._is_hang_shaped(f.get('url'))),
+                None)
+            if match is None:
+                return 'ended', None
+
+            return 'ok', match['url']
 
         for f in formats:
             if f.get('protocol') not in (None, 'https'):
@@ -2135,8 +2161,7 @@ class YoutubeIE(YoutubeBaseInfoExtractor):
             f['protocol'] = 'http_dash_segments_generator'
             f['is_live'] = True
             f['fragments'] = functools.partial(
-                self._live_https_fragments, video_id, f['format_id'], f['url'],
-                _placeholder_refetch_url)
+                self._live_https_fragments, video_id, f['format_id'], f['url'], refetch_url)
 
     def _live_https_fragments(self, video_id, format_id, initial_url, refetch_url, ctx):
         """Fragment generator for live adaptive HTTPS formats. See design doc section 6.2.
