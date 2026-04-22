@@ -3603,10 +3603,12 @@ class YoutubeIE(YoutubeBaseInfoExtractor):
             def process_https_formats():
                 proto = 'https'
                 https_fmts = []
+                live_adaptive_skipped = 0
 
                 for fmt_stream in streaming_formats:
                     # Live adaptive https formats are not supported: skip unless extractor-arg given
                     if fmt_stream.get('targetDurationSec') and skip_bad_formats:
+                        live_adaptive_skipped += 1
                         continue
 
                     # FORMAT_STREAM_TYPE_OTF(otf=1) requires downloading the init fragment
@@ -3702,6 +3704,13 @@ class YoutubeIE(YoutubeBaseInfoExtractor):
                         fmt['available_at'] = available_at
 
                     https_fmts.append(fmt)
+
+                if live_adaptive_skipped:
+                    self.write_debug(
+                        f'{video_id}: Skipped {live_adaptive_skipped} live adaptive HTTPS '
+                        f'format(s) from {client_name} client. Pass '
+                        f'--extractor-args "youtube:formats=incomplete" to include them.',
+                        only_once=True)
 
                 for fmt in https_fmts:
                     if (all_formats or 'dashy' in format_types) and fmt['filesize']:
