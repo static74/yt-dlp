@@ -4262,6 +4262,9 @@ class YoutubeIE(YoutubeBaseInfoExtractor):
             self._prepare_live_from_start_formats(
                 formats, video_id, live_start_time, url, webpage_url, smuggled_data, live_status == 'is_live')
 
+        if live_status == 'is_live':
+            self._prepare_live_https_formats(formats, video_id, url, webpage_url, smuggled_data)
+
         formats.extend(self._extract_storyboard(player_responses, duration))
 
         channel_handle = self.handle_from_url(owner_profile_url)
