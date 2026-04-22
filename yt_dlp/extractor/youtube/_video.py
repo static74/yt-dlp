@@ -2121,6 +2121,12 @@ class YoutubeIE(YoutubeBaseInfoExtractor):
         partial binding for `fragments` is added in Task 2; the refetch_url closure is
         added in Task 4.
         """
+        def _placeholder_refetch_url(format_id):
+            # Real closure is installed in Task 4 (wires _initial_extract + _list_formats).
+            # Tests inject their own refetch_url directly when calling _live_https_fragments.
+            raise NotImplementedError(
+                'refetch_url closure not yet wired; see design doc section 6.1')
+
         for f in formats:
             if f.get('protocol') not in (None, 'https'):
                 continue
@@ -2128,6 +2134,56 @@ class YoutubeIE(YoutubeBaseInfoExtractor):
                 continue
             f['protocol'] = 'http_dash_segments_generator'
             f['is_live'] = True
+            f['fragments'] = functools.partial(
+                self._live_https_fragments, video_id, f['format_id'], f['url'],
+                _placeholder_refetch_url)
+
+    def _live_https_fragments(self, video_id, format_id, initial_url, refetch_url, ctx):
+        """Fragment generator for live adaptive HTTPS formats. See design doc section 6.2.
+
+        Yields one fragment spec per iteration. Reads ctx['last_error'] as the
+        FragmentFD back-channel. On HTTP 4xx, calls refetch_url(format_id) which
+        returns one of ('ok', url), ('ended', None), or ('retry', None). Exits
+        on ('ended', None) or when error budget is exhausted.
+        """
+        FETCH_SPAN = 5
+        ERROR_BUDGET = 30
+
+        frag_index = 0  # internal counter; dash.py rewrites the outgoing value
+        error_score = 0
+        current_url = initial_url
+
+        self.write_debug(f'[{video_id}] Generating live HTTPS fragments for format {format_id}')
+        while True:
+            last_error = ctx.pop('last_error', None)
+
+            if last_error is not None:
+                error_score += 2
+                if isinstance(last_error, HTTPError) and last_error.status < 500:
+                    status, new_url = refetch_url(format_id)
+                    if status == 'ended':
+                        self.to_screen(
+                            f'[{video_id}] Live stream ended, finalizing output')
+                        return
+                    if status == 'ok':
+                        current_url = new_url
+                    # status == 'retry': keep current_url; budget will terminate if permanent
+
+            if error_score > ERROR_BUDGET:
+                self.report_warning(
+                    f'[{video_id}] Error budget exhausted, stopping')
+                return
+
+            frag_index += 1
+            t0 = time.time()
+            yield {'url': current_url, 'fragment_count': None}
+
+            if ctx.get('last_error') is None:
+                error_score = max(0, error_score - 1)
+
+            elapsed = time.time() - t0
+            if elapsed < FETCH_SPAN:
+                time.sleep(FETCH_SPAN - elapsed)
 
     def _get_player_js_version(self):
         if self._player_js_version == 'actual':
