@@ -1,6 +1,6 @@
 # YouTube live adaptive HTTPS continuous downloader — implementation plan
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [x]`) syntax for tracking.
 
 **Goal:** Add a downloader path for YouTube live adaptive HTTPS formats (itag 271/313 on authenticated live streams) by introducing two methods on `YoutubeIE` that mark `hang=1`-shaped formats with the existing `http_dash_segments_generator` protocol and bind a fragment-yielding generator. Zero changes to any downloader.
 
@@ -37,7 +37,7 @@ This task lands the test file with one test method, plus the minimal implementat
 - Create: `test/test_youtube_live_https.py`
 - Modify: `yt_dlp/extractor/youtube/_video.py` (add `_is_hang_shaped` staticmethod and minimal `_prepare_live_https_formats` method near `_live_dash_fragments` at line ~2042)
 
-- [ ] **Step 1: Create the test file with the URL-matcher test**
+- [x] **Step 1: Create the test file with the URL-matcher test**
 
 Create `test/test_youtube_live_https.py` with this exact content:
 
@@ -104,7 +104,7 @@ if __name__ == '__main__':
     unittest.main()
 ```
 
-- [ ] **Step 2: Run the test and verify it fails**
+- [x] **Step 2: Run the test and verify it fails**
 
 Run from the repo root:
 
@@ -120,7 +120,7 @@ AttributeError: 'YoutubeIE' object has no attribute '_prepare_live_https_formats
 
 Or similar. All four test methods should fail because the method doesn't exist yet.
 
-- [ ] **Step 3: Implement `_is_hang_shaped` and `_prepare_live_https_formats` (minimal)**
+- [x] **Step 3: Implement `_is_hang_shaped` and `_prepare_live_https_formats` (minimal)**
 
 Open `yt_dlp/extractor/youtube/_video.py`. Locate the end of `_live_dash_fragments` (around line 2101, before `_get_player_js_version` at line 2103). Insert the two methods right before `_get_player_js_version`.
 
@@ -157,7 +157,7 @@ Add this code (note: `urllib.parse` is already imported at the top of the file):
             f['is_live'] = True
 ```
 
-- [ ] **Step 4: Run the test and verify it passes**
+- [x] **Step 4: Run the test and verify it passes**
 
 Run:
 
@@ -167,7 +167,7 @@ python3 -m unittest test.test_youtube_live_https -v
 
 Expected: all four test methods pass. Output contains `OK` at the end.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add test/test_youtube_live_https.py yt_dlp/extractor/youtube/_video.py
@@ -195,7 +195,7 @@ This task adds `_live_https_fragments` and extends `_prepare_live_https_formats`
 - Modify: `test/test_youtube_live_https.py` (add 4 generator test methods)
 - Modify: `yt_dlp/extractor/youtube/_video.py` (add `_live_https_fragments` method; extend `_prepare_live_https_formats` to bind partial)
 
-- [ ] **Step 1: Add the generator state-machine tests**
+- [x] **Step 1: Add the generator state-machine tests**
 
 Edit `test/test_youtube_live_https.py`. Add these imports after the existing ones:
 
@@ -292,7 +292,7 @@ class TestLiveHttpsGenerator(unittest.TestCase):
                          f'expected exactly 16 yields before budget-exit, got {yielded}')
 ```
 
-- [ ] **Step 2: Run tests and verify they fail**
+- [x] **Step 2: Run tests and verify they fail**
 
 Run:
 
@@ -302,7 +302,7 @@ python3 -m unittest test.test_youtube_live_https.TestLiveHttpsGenerator -v
 
 Expected: all four test methods fail with `AttributeError: 'YoutubeIE' object has no attribute '_live_https_fragments'`.
 
-- [ ] **Step 3: Add `_live_https_fragments` method**
+- [x] **Step 3: Add `_live_https_fragments` method**
 
 Open `yt_dlp/extractor/youtube/_video.py`. At the top of the file, check that `time`, `functools`, and `threading` are already imported (they are, at lines 5, 14, 15 respectively — verify before proceeding). Also verify `HTTPError` is imported from `...networking.exceptions` (line 31).
 
@@ -357,7 +357,7 @@ Insert this method immediately after `_prepare_live_https_formats` (which you ad
                 time.sleep(FETCH_SPAN - elapsed)
 ```
 
-- [ ] **Step 4: Extend `_prepare_live_https_formats` to bind the partial**
+- [x] **Step 4: Extend `_prepare_live_https_formats` to bind the partial**
 
 Edit the body of `_prepare_live_https_formats`. Replace the existing match-block inside the `for f in formats:` loop so it binds `fragments` via `functools.partial`, using a placeholder `refetch_url` that raises — the real closure comes in Task 4. The test suite will not exercise the real closure because it passes its own mock `refetch_url`.
 
@@ -394,7 +394,7 @@ With this:
                 _placeholder_refetch_url)
 ```
 
-- [ ] **Step 5: Run all tests and verify pass**
+- [x] **Step 5: Run all tests and verify pass**
 
 Run:
 
@@ -404,7 +404,7 @@ python3 -m unittest test.test_youtube_live_https -v
 
 Expected: all 8 test methods pass (4 matcher + 4 generator). Output contains `OK` at the end.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add test/test_youtube_live_https.py yt_dlp/extractor/youtube/_video.py
@@ -437,7 +437,7 @@ Test 2 covered 'ok', 'retry', and budget exhaustion. Test 3 locks in the 'ended'
 **Files:**
 - Modify: `test/test_youtube_live_https.py` (add one test method)
 
-- [ ] **Step 1: Add the stream-end termination test**
+- [x] **Step 1: Add the stream-end termination test**
 
 Edit `test/test_youtube_live_https.py`. Inside the `TestLiveHttpsGenerator` class (after `test_budget_exhaustion_terminates`), add:
 
@@ -463,7 +463,7 @@ Edit `test/test_youtube_live_https.py`. Inside the `TestLiveHttpsGenerator` clas
         self.assertIn('Live stream ended', msg)
 ```
 
-- [ ] **Step 2: Run the test and verify it passes**
+- [x] **Step 2: Run the test and verify it passes**
 
 Run:
 
@@ -475,7 +475,7 @@ Expected: test passes. The 'ended' code path is already implemented (Task 2), so
 
 If it fails because `to_screen` wasn't called, check that the implementation in `_live_https_fragments` calls `self.to_screen(...)` and not `self.write_debug(...)` on the 'ended' path.
 
-- [ ] **Step 3: Run the full test file to confirm no regressions**
+- [x] **Step 3: Run the full test file to confirm no regressions**
 
 ```bash
 python3 -m unittest test.test_youtube_live_https -v
@@ -483,7 +483,7 @@ python3 -m unittest test.test_youtube_live_https -v
 
 Expected: all 9 test methods pass.
 
-- [ ] **Step 4: Commit**
+- [x] **Step 4: Commit**
 
 ```bash
 git add test/test_youtube_live_https.py
@@ -509,7 +509,7 @@ Replace the placeholder with the real closure that runs `_initial_extract` + `_l
 **Files:**
 - Modify: `yt_dlp/extractor/youtube/_video.py` (replace placeholder `_placeholder_refetch_url` with real closure)
 
-- [ ] **Step 1: Replace the placeholder with the real closure**
+- [x] **Step 1: Replace the placeholder with the real closure**
 
 In `_prepare_live_https_formats`, replace the entire method body with this:
 
@@ -573,7 +573,7 @@ grep -n "^from.*import.*ExtractorError\|^from.*import.*traverse_obj" yt_dlp/extr
 
 Both should already be imported (ExtractorError is standard; traverse_obj is used heavily throughout the file). If either is missing, add to the existing `from ...utils import ...` block.
 
-- [ ] **Step 2: Run unit tests to confirm no regressions**
+- [x] **Step 2: Run unit tests to confirm no regressions**
 
 Run:
 
@@ -583,7 +583,7 @@ python3 -m unittest test.test_youtube_live_https -v
 
 Expected: all 9 test methods pass. The tests inject their own `refetch_url` directly into `_live_https_fragments`, so they don't exercise the real closure. The real closure is exercised by Task 6's manual smoke test.
 
-- [ ] **Step 3: Run the broader YouTube test module to confirm no regressions**
+- [x] **Step 3: Run the broader YouTube test module to confirm no regressions**
 
 Run:
 
@@ -594,7 +594,7 @@ python3 -m unittest test.test_youtube_lists -v
 
 Expected: both pass. These tests don't exercise `_prepare_live_https_formats` directly — this is a safety net to confirm the new code didn't accidentally break an existing YouTube code path.
 
-- [ ] **Step 4: Commit**
+- [x] **Step 4: Commit**
 
 ```bash
 git add yt_dlp/extractor/youtube/_video.py
@@ -630,7 +630,7 @@ Add one line in `_real_extract` so `_prepare_live_https_formats` actually fires 
 **Files:**
 - Modify: `yt_dlp/extractor/youtube/_video.py:~4151` (one added line after the existing `_prepare_live_from_start_formats` call)
 
-- [ ] **Step 1: Confirm the current state of the call site**
+- [x] **Step 1: Confirm the current state of the call site**
 
 Run:
 
@@ -654,7 +654,7 @@ If the exact lines differ, locate them with:
 grep -n "self\._prepare_live_from_start_formats" yt_dlp/extractor/youtube/_video.py
 ```
 
-- [ ] **Step 2: Add the call**
+- [x] **Step 2: Add the call**
 
 Using the Edit tool or equivalent, add a new conditional block immediately after the `_prepare_live_from_start_formats` call, before the `formats.extend(self._extract_storyboard(...))` line:
 
@@ -683,7 +683,7 @@ Replace with:
 
 Rationale for `live_status == 'is_live'` (not `needs_live_processing`): `needs_live_processing` is truthy only when `--live-from-start` is passed or the stream is post-live with duration > 2h (see `_video.py:3195-3198`). Our feature targets the normal "watch live now" path which does not set `--live-from-start`. Gating on `live_status == 'is_live'` fires on every live stream regardless of the from-start flag.
 
-- [ ] **Step 3: Run the full YouTube test suite**
+- [x] **Step 3: Run the full YouTube test suite**
 
 Run:
 
@@ -695,7 +695,7 @@ python3 -m unittest test.test_youtube_lists -v
 
 Expected: all three pass. No regressions.
 
-- [ ] **Step 4: Commit**
+- [x] **Step 4: Commit**
 
 ```bash
 git add yt_dlp/extractor/youtube/_video.py
@@ -724,7 +724,7 @@ Not a code change. This is the verification step that proves the whole pipeline 
 
 **Files:** None.
 
-- [ ] **Step 1: Locate a currently-live YouTube broadcast**
+- [x] **Step 1: Locate a currently-live YouTube broadcast**
 
 You need a live YouTube broadcast with 1440p or 2160p available. If the original test stream `fO9e9jnhYK8` is still live, use it. Otherwise find any authenticated YouTube live broadcast with high-tier live adaptive HTTPS formats.
 
@@ -740,7 +740,7 @@ python3 -m yt_dlp -F \
 
 Expected: format table includes a row for itag 271 (2560x1440) or 313 (3840x2160) labelled `(incomplete)`.
 
-- [ ] **Step 2: Run the smoke capture (60 seconds)**
+- [x] **Step 2: Run the smoke capture (60 seconds)**
 
 ```bash
 timeout 90 python3 -m yt_dlp -v -f 271 \
@@ -760,7 +760,7 @@ Look in verbose output for:
 
 If the verbose log shows `[download] Destination: ... .webm` followed by fragment-by-fragment progress and no immediate `ERROR`, the smoke test is progressing.
 
-- [ ] **Step 3: Verify the output**
+- [x] **Step 3: Verify the output**
 
 ```bash
 ffprobe /tmp/live_https_smoke.webm 2>&1 | head -40
@@ -774,7 +774,7 @@ Expected output contains:
 
 If duration is 00:00:05 or less, the generator terminated prematurely — inspect the verbose log for early error-budget exhaustion or spurious `('ended', None)` returns.
 
-- [ ] **Step 4: Record the result**
+- [x] **Step 4: Record the result**
 
 No commit. Document in your own notes (or as a comment on issue #2) what you observed:
 - Output file size
