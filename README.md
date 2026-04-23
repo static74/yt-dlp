@@ -18,6 +18,8 @@
 
 yt-dlp is a feature-rich command-line audio/video downloader with support for [thousands of sites](supportedsites.md). The project is a fork of [youtube-dl](https://github.com/ytdl-org/youtube-dl) based on the now inactive [youtube-dlc](https://github.com/blackjack4494/yt-dlc).
 
+> **Fork notice (`static74/yt-dlp`):** this fork adds a continuous downloader for YouTube live adaptive HTTPS formats (`hang=1` / `source=yt_live_broadcast`, itag 271/313). See [`docs/FORK.md`](docs/FORK.md) for scope, usage, upstream-sync guidance, and the rationale for not submitting upstream. Do not open PRs against `yt-dlp/yt-dlp` with commits from this fork.
+
 <!-- MANPAGE: MOVE "USAGE AND OPTIONS" SECTION HERE -->
 
 <!-- MANPAGE: BEGIN EXCLUDED SECTION -->
